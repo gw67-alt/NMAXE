@@ -35,7 +35,7 @@ void StratumClass::generate_symmetrical_exclusion_list() {
             for(int i = 1; i < half; i++) start *= 10;
             uint32_t end = start * 10;
             
-            for(uint32_t i = start; i < end && i < 100000; i++) { // Limit for performance
+            for(uint32_t i = start; i < end && i < 2147483647; i++) { // Limit for performance
                 String first_half = String(i);
                 String second_half = first_half;
                 // Reverse second_half manually
