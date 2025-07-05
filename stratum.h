@@ -73,7 +73,10 @@ private:
         uint32_t current;
         uint32_t worker_id;
     };
-    
+    // ADD THESE LINES to your existing private section:
+    std::vector<uint32_t> _excluded_symmetrical_nonces;
+    bool _symmetrical_exclusion_enabled = true;
+    uint32_t _symmetrical_cache_size = 100000;
     std::vector<nonce_range_t> _nonce_ranges;
     uint32_t _total_workers = 1;
 
@@ -135,7 +138,12 @@ public:
     bool submit(String pool_job_id, String extranonce2, uint32_t ntime, uint32_t nonce, uint32_t version);
     bool hello_pool(uint32_t hello_interval, uint32_t lost_max_time);
     stratum_method_data listen_methods();
-
+    // NEW: Symmetrical nonce exclusion methods
+    void generate_symmetrical_exclusion_list();
+    bool is_binary_palindrome(uint32_t n);
+    bool is_symmetrical_nonce(uint32_t nonce);
+    void set_symmetrical_exclusion(bool enabled);
+    void get_symmetrical_exclusion_stats();
     size_t push_job_cache(pool_job_data_t job);
     pool_job_data_t pop_job_cache();
 
