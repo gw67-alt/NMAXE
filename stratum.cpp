@@ -9,15 +9,250 @@
 #include "global.h"
 #include <sstream>
 #include <iomanip>
+#include <algorithm>
 
 StratumClass::~StratumClass(){
     this->_rsp_json.garbageCollect();
 }
 
-// NEW: Nonce range management methods
+// NEW: Generate comprehensive list of symmetrical numbers to exclude
+void StratumClass::generate_symmetrical_exclusion_list() {
+    _excluded_symmetrical_nonces.clear();
+    
+    LOG_I("Generating symmetrical number exclusion list...");
+    
+    // 1. PALINDROMIC NUMBERS (reads same forwards and backwards)
+    // Single digit palindromes
+    for(uint32_t i = 0; i <= 9; i++) {
+        _excluded_symmetrical_nonces.push_back(i);
+    }
+    
+    // Multi-digit palindromes (up to 10 digits for 32-bit range)
+    for(int digits = 2; digits <= 10; digits++) {
+        if(digits % 2 == 0) { // Even digits
+            int half = digits / 2;
+            uint32_t start = 1;
+            for(int i = 1; i < half; i++) start *= 10;
+            uint32_t end = start * 10;
+            
+            for(uint32_t i = start; i < end && i < 100000; i++) { // Limit for performance
+                String first_half = String(i);
+                String second_half = first_half;
+                // Reverse second_half manually
+                int len = second_half.length();
+                for(int j = 0; j < len / 2; j++) {
+                    char temp = second_half[j];
+                    second_half[j] = second_half[len - 1 - j];
+                    second_half[len - 1 - j] = temp;
+                }
+                String palindrome_str = first_half + second_half;
+                uint32_t palindrome = palindrome_str.toInt();
+                if(palindrome <= 0xFFFFFFFF) {
+                    _excluded_symmetrical_nonces.push_back(palindrome);
+                }
+            }
+        } else { // Odd digits
+            int half = digits / 2;
+            uint32_t start = 1;
+            for(int i = 1; i < half; i++) start *= 10;
+            uint32_t end = start * 10;
+            
+            for(uint32_t i = start; i < end && i < 10000; i++) { // Limit for performance
+                for(int mid = 0; mid <= 9; mid++) {
+                    String first_half = String(i);
+                    String second_half = first_half;
+                    // Reverse second_half manually
+                    int len = second_half.length();
+                    for(int j = 0; j < len / 2; j++) {
+                        char temp = second_half[j];
+                        second_half[j] = second_half[len - 1 - j];
+                        second_half[len - 1 - j] = temp;
+                    }
+                    String palindrome_str = first_half + String(mid) + second_half;
+                    uint32_t palindrome = palindrome_str.toInt();
+                    if(palindrome <= 0xFFFFFFFF) {
+                        _excluded_symmetrical_nonces.push_back(palindrome);
+                    }
+                }
+            }
+        }
+    }
+    
+    // WITH this corrected version:
+    uint32_t repdigit_patterns[] = {
+        0, 11, 22, 33, 44, 55, 66, 77, 88, 99,
+        111, 222, 333, 444, 555, 666, 777, 888, 999,
+        1111, 2222, 3333, 4444, 5555, 6666, 7777, 8888, 9999,
+        11111, 22222, 33333, 44444, 55555, 66666, 77777, 88888, 99999,
+        111111, 222222, 333333, 444444, 555555, 666666, 777777, 888888, 999999,
+        1111111, 2222222, 3333333, 4444444, 5555555, 6666666, 7777777, 8888888, 9999999,
+        11111111, 22222222, 33333333, 44444444, 55555555, 66666666, 77777777, 88888888, 99999999,
+        111111111, 222222222, 333333333, 444444444, 555555555, 666666666, 777777777, 888888888, 999999999,
+        1111111111U, 2222222222U, 3333333333U // Remove 4444444444U as it exceeds 32-bit limit
+    };
+    
+    for(uint32_t repdigit : repdigit_patterns) {
+        if(repdigit <= 0xFFFFFFFF) {
+            _excluded_symmetrical_nonces.push_back(repdigit);
+        }
+    }
+    
+    // 3. POWERS OF 2 (highly symmetrical in binary)
+    for(int i = 0; i < 32; i++) {
+        uint32_t power = 1U << i;
+        _excluded_symmetrical_nonces.push_back(power);
+        // Also exclude power - 1 (all 1s in binary)
+        if(power > 1) {
+            _excluded_symmetrical_nonces.push_back(power - 1);
+        }
+    }
+    
+    // 4. POWERS OF 10 (decimal symmetry)
+    uint32_t power_of_10 = 1;
+    while(power_of_10 <= 0xFFFFFFFF / 10) {
+        _excluded_symmetrical_nonces.push_back(power_of_10);
+        power_of_10 *= 10;
+    }
+    
+    // 5. FIBONACCI NUMBERS (mathematical symmetry)
+    uint32_t fib_a = 0, fib_b = 1;
+    while(fib_b <= 0xFFFFFFFF) {
+        _excluded_symmetrical_nonces.push_back(fib_b);
+        uint32_t temp = fib_a + fib_b;
+        fib_a = fib_b;
+        fib_b = temp;
+    }
+    
+    // 6. PERFECT SQUARES (geometric symmetry)
+    for(uint32_t i = 0; i * i <= 0xFFFFFFFF && i < 65536; i++) {
+        _excluded_symmetrical_nonces.push_back(i * i);
+    }
+    
+    // 7. TRIANGULAR NUMBERS (n*(n+1)/2)
+    for(uint32_t i = 0; i < 92681; i++) { // Limit to prevent overflow
+        uint32_t triangular = i * (i + 1) / 2;
+        if(triangular <= 0xFFFFFFFF) {
+            _excluded_symmetrical_nonces.push_back(triangular);
+        }
+    }
+    
+    // 8. BINARY PALINDROMES (symmetrical in binary representation)
+    for(uint32_t i = 1; i <= 0xFFFF; i++) { // Limit for performance
+        if(is_binary_palindrome(i)) {
+            _excluded_symmetrical_nonces.push_back(i);
+        }
+    }
+    
+    // 9. ASCENDING/DESCENDING DIGIT SEQUENCES
+    // Ascending: 123, 1234, 12345, etc.
+    for(int start_digit = 1; start_digit <= 9; start_digit++) {
+        uint32_t ascending = 0;
+        for(int digit = start_digit; digit <= 9; digit++) {
+            ascending = ascending * 10 + digit;
+            if(ascending <= 0xFFFFFFFF) {
+                _excluded_symmetrical_nonces.push_back(ascending);
+            }
+        }
+    }
+    
+    // Descending: 987, 9876, 98765, etc.
+    for(int start_digit = 9; start_digit >= 1; start_digit--) {
+        uint32_t descending = 0;
+        for(int digit = start_digit; digit >= 1; digit--) {
+            descending = descending * 10 + digit;
+            if(descending <= 0xFFFFFFFF) {
+                _excluded_symmetrical_nonces.push_back(descending);
+            }
+        }
+    }
+    
+    // 10. ALTERNATING PATTERNS (0101, 1010, 1212, etc.)
+    for(int a = 0; a <= 9; a++) {
+        for(int b = 0; b <= 9; b++) {
+            if(a != b) {
+                uint32_t pattern = 0;
+                for(int len = 2; len <= 8; len++) {
+                    pattern = pattern * 10 + (len % 2 == 0 ? a : b);
+                    if(pattern <= 0xFFFFFFFF) {
+                        _excluded_symmetrical_nonces.push_back(pattern);
+                    }
+                }
+            }
+        }
+    }
+    
+    // Remove duplicates and sort
+    std::sort(_excluded_symmetrical_nonces.begin(), _excluded_symmetrical_nonces.end());
+    _excluded_symmetrical_nonces.erase(
+        std::unique(_excluded_symmetrical_nonces.begin(), _excluded_symmetrical_nonces.end()),
+        _excluded_symmetrical_nonces.end()
+    );
+    
+    // Limit cache size for memory efficiency
+    if(_excluded_symmetrical_nonces.size() > _symmetrical_cache_size) {
+        _excluded_symmetrical_nonces.resize(_symmetrical_cache_size);
+    }
+    
+    LOG_I("Generated %d symmetrical numbers for exclusion", _excluded_symmetrical_nonces.size());
+}
+
+// NEW: Check if a number is a binary palindrome
+bool StratumClass::is_binary_palindrome(uint32_t n) {
+    uint32_t reversed = 0;
+    uint32_t original = n;
+    
+    while(n > 0) {
+        reversed = (reversed << 1) | (n & 1);
+        n >>= 1;
+    }
+    
+    return original == reversed;
+}
+
+// NEW: Check if a nonce should be excluded due to symmetry
+bool StratumClass::is_symmetrical_nonce(uint32_t nonce) {
+    if(!_symmetrical_exclusion_enabled) return false;
+    
+    // Binary search for efficiency
+    return std::binary_search(_excluded_symmetrical_nonces.begin(), 
+                             _excluded_symmetrical_nonces.end(), 
+                             nonce);
+}
+
+// NEW: Enable/disable symmetrical exclusion
+void StratumClass::set_symmetrical_exclusion(bool enabled) {
+    _symmetrical_exclusion_enabled = enabled;
+    LOG_I("Symmetrical nonce exclusion %s", enabled ? "enabled" : "disabled");
+}
+
+// NEW: Get statistics about excluded nonces
+void StratumClass::get_symmetrical_exclusion_stats() {
+    LOG_I("=== Symmetrical Exclusion Statistics ===");
+    LOG_I("Total excluded nonces: %d", _excluded_symmetrical_nonces.size());
+    LOG_I("Exclusion enabled: %s", _symmetrical_exclusion_enabled ? "yes" : "no");
+    LOG_I("Cache size limit: %d", _symmetrical_cache_size);
+    
+    if(_excluded_symmetrical_nonces.size() > 0) {
+        LOG_I("First 10 excluded: ");
+        for(int i = 0; i < 10 && i < _excluded_symmetrical_nonces.size(); i++) {
+            LOG_I("  %u", _excluded_symmetrical_nonces[i]);
+        }
+        
+        LOG_I("Last 10 excluded: ");
+        int start = std::max(0, (int)_excluded_symmetrical_nonces.size() - 10);
+        for(int i = start; i < _excluded_symmetrical_nonces.size(); i++) {
+            LOG_I("  %u", _excluded_symmetrical_nonces[i]);
+        }
+    }
+}
+
+// ENHANCED: Nonce range management methods with symmetrical exclusion
 void StratumClass::configure_nonce_ranges(uint32_t num_workers) {
     _total_workers = num_workers;
     _nonce_ranges.clear();
+    
+    // NEW: Generate symmetrical exclusion list first
+    generate_symmetrical_exclusion_list();
     
     uint32_t range_size = 0xFFFFFFFF / num_workers;
     for(uint32_t i = 0; i < num_workers; i++) {
@@ -29,10 +264,13 @@ void StratumClass::configure_nonce_ranges(uint32_t num_workers) {
         _nonce_ranges.push_back(range);
     }
     
-    LOG_I("Configured %d nonce ranges for workers", num_workers);
+    LOG_I("Configured %d nonce ranges for workers with symmetrical exclusion", num_workers);
     for(uint32_t i = 0; i < num_workers; i++) {
         LOG_D("Worker %d: range 0x%08x - 0x%08x", i, _nonce_ranges[i].start, _nonce_ranges[i].end);
     }
+    
+    // NEW: Show exclusion statistics
+    get_symmetrical_exclusion_stats();
 }
 
 uint32_t StratumClass::get_next_nonce(uint32_t worker_id) {
@@ -41,15 +279,31 @@ uint32_t StratumClass::get_next_nonce(uint32_t worker_id) {
         return 0;
     }
     
-    uint32_t nonce = _nonce_ranges[worker_id].current++;
+    // NEW: Symmetrical exclusion logic
+    uint32_t attempts = 0;
+    uint32_t max_attempts = 1000000000; // Prevent infinite loop
     
-    // Reset if we've exhausted the range
-    if(_nonce_ranges[worker_id].current > _nonce_ranges[worker_id].end) {
-        _nonce_ranges[worker_id].current = _nonce_ranges[worker_id].start;
-        LOG_D("Worker %d nonce range reset to start", worker_id);
+    while(attempts < max_attempts) {
+        uint32_t nonce = _nonce_ranges[worker_id].current++;
+        
+        // Reset if we've exhausted the range
+        if(_nonce_ranges[worker_id].current > _nonce_ranges[worker_id].end) {
+            _nonce_ranges[worker_id].current = _nonce_ranges[worker_id].start;
+            LOG_D("Worker %d nonce range reset to start", worker_id);
+        }
+        
+        // NEW: Check if this nonce should be excluded
+        if(!is_symmetrical_nonce(nonce)) {
+            return nonce; // Return non-symmetrical nonce
+        }
+        
+        attempts++;
+        LOG_D("Worker %d skipped symmetrical nonce: %u", worker_id, nonce);
     }
     
-    return nonce;
+    // If we can't find a non-symmetrical nonce, return the current one anyway
+    LOG_W("Worker %d: Could not find non-symmetrical nonce after %d attempts", worker_id, max_attempts);
+    return _nonce_ranges[worker_id].current++;
 }
 
 bool StratumClass::reset_nonce_range(uint32_t worker_id) {
@@ -104,7 +358,7 @@ void StratumClass::reset(){
     this->_suggest_diff_support = true;
     this->_gid = 1;
     
-    // NEW: Reset nonce ranges
+    // Reset nonce ranges
     this->reset_all_nonce_ranges();
 }
 
@@ -129,11 +383,10 @@ void StratumClass::reset(pool_info_t pConfig, stratum_info_t sConfig){
     this->_suggest_diff_support = true;
     this->_gid = 1;
     
-    // NEW: Reset nonce ranges
+    // Reset nonce ranges
     this->reset_all_nonce_ranges();
 }
 
-// EXISTING: All original methods preserved unchanged
 uint32_t StratumClass::_get_msg_id(){
     return this->_gid++;
 }
@@ -269,6 +522,7 @@ bool StratumClass::subscribe(){
         LOG_E("Failed to send mining.subscribe request");
         return false;
     }
+
 
     //wait for response
     uint32_t start = millis();
@@ -461,7 +715,6 @@ stratum_rsp StratumClass::get_method_rsp_by_id(uint32_t id){
     return rsp;
 }
 
-// MODIFIED: Enhanced stratum thread with nonce range initialization
 void stratum_thread_entry(void *args){
     char *name = (char*)malloc(20);
     strcpy(name, (char*)args);
@@ -469,10 +722,6 @@ void stratum_thread_entry(void *args){
     free(name);
 
     g_nmaxe.stratum->set_pool_difficulty(DEFAULT_POOL_DIFFICULTY);
-    
-    // NEW: Initialize nonce ranges for workers (adjust number as needed)
-    g_nmaxe.stratum->configure_nonce_ranges(4); // Configure for 4 workers
-    
     StaticJsonDocument<1024*4> json;
     while(true){
         static int w_retry = 0, w_maxRetries = 24;
@@ -589,8 +838,6 @@ void stratum_thread_entry(void *args){
 
                         if(job.clean_jobs){
                             g_nmaxe.stratum->clear_job_cache();
-                            // NEW: Reset nonce ranges on clean jobs
-                            g_nmaxe.stratum->reset_all_nonce_ranges();
                             xSemaphoreGive(g_nmaxe.stratum->clear_job_xsem);
                         }
                         size_t cached_size = g_nmaxe.stratum->push_job_cache(job);
